@@ -27,6 +27,6 @@ The tables in RAW format are available in the repository, allowing for direct an
 
 - [Raw Data Tables Repository](https://gist.github.com/DaniModak/d0cdc441bc2cab2abdc5b37e45ca5cb4)
 
-## Documentation
+## Documentation (high recommended to start here)
 
 - [Documentation](https://github.com/biasza/Modak-Challenge/tree/main/Documentation)

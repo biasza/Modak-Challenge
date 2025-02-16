@@ -3,9 +3,11 @@
 
 # Date        Version        Who              What
 # 2024-02-11     1           Bianca Lacerda   Modak Challenge
+# 2025-02-15     2           Bianca Lacerda   Modak Challenge - Additional Analyses for timestamp duplicated in allowance.events json file
 
 #########################################################################################################################################################
-#If you have any questions, you can find the documentation at https://
+#If you have any questions, you can find the executable documentation at https://
+#In this executable documentation, you can run every snipet of code to see the results and the code implementation.
 #When a new code block starts, it has the same name comented and centralized from the documentation: Ex.: ########################### Code Implementation ##############################
 #it means that that block corresponds to the "Code Implementation" section of the documentation.
 #########################################################################################################################################################
@@ -306,6 +308,16 @@ def calculate_incremented_date(start_date, frequency_type, day):
         return result_date.strftime("%d")
     else:
         return "Error in date calculation"
+    
+    
+# Function to check for duplicates timestamps in allowance.events json file
+def check_duplicate(row):
+    if row['event.timestamp'] == row['prev_timestamp']:
+        return row['allowance.scheduled.frequency'] == row['prev_frequency'] and row['allowance.scheduled.day'] == row['prev_day']
+    elif row['allowance.scheduled.frequency'] == row['prev_frequency'] and row['allowance.scheduled.day'] == row['prev_day']:
+        time_diff = (row['event.timestamp'] - row['prev_timestamp']).total_seconds()
+        return abs(time_diff) <= 20
+    return False
     
 
 
@@ -698,3 +710,97 @@ print(df_final_merged[['user_id', 'payment_date', 'next_payment_day', 'next_expe
 # Saving the result to a CSV file
 output_file_payment_status = 'payment_table_discrepancy.csv'
 df_final_merged[['user_id', 'payment_date', 'next_payment_day', 'next_expected_payment_date', 'payment_date_status']].to_csv(output_file_payment_status, index=False)
+
+
+
+
+
+
+##################################################################################################################################################
+##################################################################################################################################################
+################################ v2 - Additional Analyses for timestamp duplicated in allowance.events json file ########################################
+##################################################################################################################################################
+##################################################################################################################################################
+
+
+
+# Load and process the data
+df_events['event.timestamp'] = pd.to_datetime(df_events['event.timestamp'], errors='coerce')
+
+# Sort and assign positions
+df_events_sorted = df_events.sort_values(by=['user.id', 'event.timestamp']).reset_index(drop=True)
+df_events_sorted['position'] = df_events_sorted.groupby('user.id').cumcount() + 1
+
+# Identify last, second to last, and third to last positions for each user
+last_positions = df_events_sorted.groupby('user.id')['position'].max().reset_index()
+last_positions.columns = ['user.id', 'last_position']
+df_events_sorted = pd.merge(df_events_sorted, last_positions, on='user.id', how='left')
+
+df_last = df_events_sorted[df_events_sorted['position'] == df_events_sorted['last_position']]
+df_penultimate = df_events_sorted[df_events_sorted['position'] == (df_events_sorted['last_position'] - 1)]
+df_antepenultimate = df_events_sorted[df_events_sorted['position'] == (df_events_sorted['last_position'] - 2)]
+
+# Rename columns for easier comparison
+df_penultimate = df_penultimate.rename(columns={
+    'event.timestamp': 'prev_timestamp',
+    'allowance.scheduled.frequency': 'prev_frequency',
+    'allowance.scheduled.day': 'prev_day'
+})
+
+df_antepenultimate = df_antepenultimate.rename(columns={
+    'event.timestamp': 'preprev_timestamp',
+    'allowance.scheduled.frequency': 'preprev_frequency',
+    'allowance.scheduled.day': 'preprev_day'
+})
+
+# Merge for comparison
+df_compare = pd.merge(df_last, df_penultimate[['user.id', 'prev_timestamp', 'prev_frequency', 'prev_day']], on='user.id', how='left')
+df_compare = pd.merge(df_compare, df_antepenultimate[['user.id', 'preprev_timestamp', 'preprev_frequency', 'preprev_day']], on='user.id', how='left')
+
+# Apply the duplicate check
+df_compare['timestamp_duplicated'] = df_compare.apply(check_duplicate, axis=1)
+
+# Filter only the records with timestamp_duplicated = True
+df_duplicates = df_compare[df_compare['timestamp_duplicated'] == True]
+
+# Add frequency and day transitions
+df_duplicates['frequency_transition'] = df_duplicates.apply(
+    lambda row: f"{row['preprev_frequency']} → {row['prev_frequency']}", axis=1
+)
+df_duplicates['day_transition'] = df_duplicates.apply(
+    lambda row: f"{row['preprev_day']} → {row['prev_day']}", axis=1
+)
+
+
+
+
+#################################################### Creating analyses and exporting the duplicate records to a CSV file ########################################################
+
+
+
+# Count the transitions and frequencies
+frequency_transition_count = df_duplicates['frequency_transition'].value_counts().reset_index()
+frequency_count = df_duplicates['allowance.scheduled.frequency'].value_counts().reset_index()
+
+# Add the combination of frequency and day transitions
+df_duplicates['frequency_day_transition'] = df_duplicates.apply(
+    lambda row: f"{row['preprev_frequency']} → {row['prev_frequency']} | {row['preprev_day']} → {row['prev_day']}", axis=1
+)
+
+# Count the combinations of frequency and day transitions
+frequency_day_transition_count = df_duplicates['frequency_day_transition'].value_counts().reset_index()
+
+df_duplicates = df_duplicates.drop(columns=['allowance.amount', 'position', 'last_position'])
+
+
+# Display the analyses
+print(f"Frequency Transitions:\n{frequency_transition_count}\n")
+print(f"Frequency Count:\n{frequency_count}\n")
+
+# Export the duplicate records to a CSV file
+output_filename_duplicates = 'timestamp_duplicates.csv'
+df_duplicates.to_csv(output_filename_duplicates, index=False)
+
+# Get the absolute path of the saved file
+output_path_duplicates = os.path.abspath(output_filename_duplicates)
+print(f"Duplicate file saved at: {output_path_duplicates}")
